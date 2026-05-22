@@ -7,7 +7,7 @@ import requests
 
 app = FastAPI()
 
-# Cleaned of all hidden non-breaking space (U+00A0) artifacts
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
