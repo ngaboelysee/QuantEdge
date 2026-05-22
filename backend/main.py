@@ -3,26 +3,23 @@ from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
 import numpy as np
 import random
-import math
-import time
-from datetime import datetime
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://ai-quant-trade-engine.vercel.app",
-        "https://myapp-hmksnzqkd-nrelysee-s-projects1.vercel.app",
-        "http://localhost:3000"
-    ],
+    "https://ai-quant-trade-engine.vercel.app",
+    "https://myapp-hmksnzqkd-nrelysee-s-projects1.vercel.app",
+    "http://localhost:3000"
+],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # =========================
-# PAIRS
+# PAIRS MAP
 # =========================
 PAIRS = {
     "EURUSD": "EURUSD=X",
@@ -36,48 +33,27 @@ PAIRS = {
 }
 
 # =========================
-# TRADE JOURNAL
+# DATA
 # =========================
-TRADE_JOURNAL = []
-
-# =========================
-# CACHE (MAJOR SPEED BOOST)
-# =========================
-DATA_CACHE = {}
-CACHE_TTL = 60  # seconds
-
-
-# =========================
-# DATA (CACHED)
-# =========================
-def get_data(pair, interval="1h", period="10d"):
-    key = f"{pair}_{interval}_{period}"
-    now = time.time()
-
-    if key in DATA_CACHE:
-        df, ts = DATA_CACHE[key]
-        if now - ts < CACHE_TTL:
-            return df
-
+def get_data(pair, interval="1h", period="7d"):
     symbol = PAIRS.get(pair)
     if not symbol:
         return None
 
     try:
         df = yf.Ticker(symbol).history(period=period, interval=interval)
-        if df is None or df.empty or len(df) < 30:
+
+        if df is None or df.empty or len(df) < 20:
             return None
 
-        df = df.dropna()
-        DATA_CACHE[key] = (df, now)
-        return df
+        return df.dropna()
 
     except:
         return None
 
 
 # =========================
-# INDICATORS (UNCHANGED LOGIC)
+# INDICATORS
 # =========================
 def ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
@@ -85,169 +61,116 @@ def ema(series, period):
 
 def rsi(series, period=14):
     delta = series.diff()
-    gain = delta.clip(lower=0).rolling(period).mean()
-    loss = (-delta.clip(upper=0)).rolling(period).mean()
+    gain = delta.where(delta > 0, 0).rolling(period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
 
-    rs = gain / loss.replace(0, np.nan)
-    rs = rs.fillna(0)
+    rs = gain / loss
+    rs = rs.replace([np.inf, -np.inf], np.nan).fillna(50)
 
     return 100 - (100 / (1 + rs))
 
 
-def atr(df, period=14):
-    high = df["High"]
-    low = df["Low"]
-    close = df["Close"]
-    prev_close = close.shift(1)
-
-    tr = np.maximum(
-        high - low,
-        np.maximum(abs(high - prev_close),
-                   abs(low - prev_close))
-    )
-
-    return tr.rolling(period).mean().fillna(0)
-
-
 # =========================
-# REGIME DETECTION (UNCHANGED)
+# VOLATILITY
 # =========================
-def detect_regime(df):
+def volatility(df):
     returns = df["Close"].pct_change().dropna()
-    vol = returns.std()
+    vol = float(np.std(returns)) if len(returns) > 0 else 0.01
 
-    adx_proxy = abs(df["Close"].diff(5)).mean()
-
-    if vol < 0.004 and adx_proxy < 0.2:
-        return "LOW_VOL_RANGE"
-    elif vol > 0.01:
-        return "HIGH_VOL"
+    if vol < 0.005:
+        regime = "LOW_VOL"
+    elif vol < 0.015:
+        regime = "NORMAL"
     else:
-        return "TRENDING"
+        regime = "HIGH_VOL"
+
+    return {"volatility": vol, "regime": regime}
 
 
 # =========================
-# MOMENTUM (UNCHANGED LOGIC)
+# SENTIMENT (REALISTIC MOMENTUM-BASED)
 # =========================
-def momentum_bias(df):
+def sentiment_engine(df):
     returns = df["Close"].pct_change().dropna()
-    short = returns.tail(8).mean()
-    long = returns.tail(30).mean()
+    momentum = returns.tail(10).mean()
 
-    bias = short - long
-
-    if bias > 0:
-        return 1
-    elif bias < 0:
-        return -1
-    return 0
+    if momentum > 0.0005:
+        return {"sentiment": "BULLISH", "score": 70, "bias": 1}
+    elif momentum < -0.0005:
+        return {"sentiment": "BEARISH", "score": 30, "bias": -1}
+    else:
+        return {"sentiment": "NEUTRAL", "score": 50, "bias": 0}
 
 
 # =========================
-# SCORE ENGINE (UNCHANGED)
+# MULTI-TIMEFRAME SCORE
 # =========================
-def compute_score(df):
+def multi_timeframe_score(df):
     close = df["Close"]
 
     r = rsi(close)
     e1 = ema(close, 9)
     e2 = ema(close, 21)
 
-    score = 0.0
+    score = 0
 
     if e1.iloc[-1] > e2.iloc[-1]:
-        score += 0.6
+        score += 1
     else:
-        score -= 0.6
+        score -= 1
 
-    rsi_val = r.iloc[-1]
-    if rsi_val < 40:
-        score += 0.4
-    elif rsi_val > 60:
-        score -= 0.4
-
-    score += momentum_bias(df) * 0.5
+    if r.iloc[-1] < 45:
+        score += 1
+    elif r.iloc[-1] > 55:
+        score -= 1
 
     return score
 
 
 # =========================
-# SIGMOID (UNCHANGED)
+# RISK ENGINE
 # =========================
-def sigmoid(x):
-    return 1 / (1 + math.exp(-x))
+def risk_engine(balance, risk):
+    risk_amount = balance * (risk / 100)
 
-
-# =========================
-# RISK ENGINE (UNCHANGED)
-# =========================
-def risk_engine(df, balance, risk_pct):
-    a = atr(df).iloc[-1]
-    price = df["Close"].iloc[-1]
-
-    if a == 0:
-        a = price * 0.01
-
-    stop_loss = float(a * 2)
-    risk_amount = balance * (risk_pct / 100)
-
-    pip_value = 1
+    stop_loss = 50
+    pip_value = 10
 
     lot_size = risk_amount / (stop_loss * pip_value)
 
     return {
         "risk_amount": round(risk_amount, 2),
-        "stop_loss_dynamic": round(stop_loss, 5),
-        "lot_size": round(lot_size, 4),
-        "take_profit": round(stop_loss * 2, 5)
+        "lot_size": round(lot_size, 2),
+        "stop_loss_pips": stop_loss,
+        "take_profit_pips": stop_loss * 2
     }
 
 
 # =========================
-# MONTE CARLO (OPTIMIZED ONLY)
+# MONTE CARLO (VOLATILITY AWARE)
 # =========================
-def monte_carlo(df, balance, confidence):
-    returns = df["Close"].pct_change().dropna().values
+def monte_carlo(balance, confidence, vol_regime):
 
-    if len(returns) < 10:
-        returns = np.array([0.001, -0.001, 0.002, -0.002])
+    results = []
 
-    sims = 100   # reduced from 300 (no logic change, same model)
-    steps = 20
+    noise = 0.01 if vol_regime == "LOW_VOL" else 0.02 if vol_regime == "NORMAL" else 0.03
 
-    results = np.empty(sims)
-
-    for i in range(sims):
+    for _ in range(300):
         val = balance
-        sampled = np.random.choice(returns, size=steps, replace=True)
 
-        for r in sampled:
-            if random.random() < confidence / 100:
-                val *= (1 + r)
+        for _ in range(15):
+            if random.randint(1, 100) < confidence:
+                val *= (1 + noise)
             else:
-                val *= (1 - abs(r))
+                val *= (1 - noise)
 
-        results[i] = val
+        results.append(val)
 
     return {
-        "expected": round(results.mean(), 2),
-        "best": round(results.max(), 2),
-        "worst": round(results.min(), 2)
+        "expected": round(np.mean(results), 2),
+        "best": round(max(results), 2),
+        "worst": round(min(results), 2)
     }
-
-
-# =========================
-# TRADE LOGGER
-# =========================
-def log_trade(pair, direction, confidence, score, balance):
-    TRADE_JOURNAL.append({
-        "time": str(datetime.utcnow()),
-        "pair": pair,
-        "direction": direction,
-        "confidence": confidence,
-        "score": score,
-        "balance": balance
-    })
 
 
 # =========================
@@ -261,35 +184,62 @@ def trade(pair: str, balance: float, risk: float):
     if df is None:
         return {
             "pair": pair,
-            "error": "No data",
-            "signal": {"direction": "HOLD", "confidence": 50}
+            "error": "No market data available",
+            "signal": {
+                "direction": "HOLD",
+                "confidence": 50,
+                "score": 0
+            }
         }
 
     price = float(df["Close"].iloc[-1])
 
-    regime = detect_regime(df)
-    score = compute_score(df)
+    # =========================
+    # CORE ENGINE
+    # =========================
+    trend_score = multi_timeframe_score(df)
+    vol = volatility(df)
+    news = sentiment_engine(df)
 
-    if regime == "HIGH_VOL":
+    # =========================
+    # FINAL SCORE MODEL
+    # =========================
+    score = (
+        trend_score * 2.0 +
+        news["bias"] * 1.5
+    )
+
+    # volatility adjustment
+    if vol["regime"] == "HIGH_VOL":
         score *= 0.7
-    elif regime == "LOW_VOL_RANGE":
+    elif vol["regime"] == "LOW_VOL":
         score *= 1.1
 
-    prob = sigmoid(score * 2.2)
-    confidence = round(prob * 100, 2)
+    # =========================
+    # PROBABILITY MODEL
+    # =========================
+    buy_prob = 50 + score * 12
+    buy_prob = max(5, min(95, buy_prob))
 
-    if confidence > 65:
+    sell_prob = 100 - buy_prob
+
+    # =========================
+    # DECISION
+    # =========================
+    if buy_prob > 65:
         direction = "BUY"
-    elif confidence < 35:
+    elif buy_prob < 35:
         direction = "SELL"
     else:
         direction = "HOLD"
 
-    risk_data = risk_engine(df, balance, risk)
-    mc = monte_carlo(df, balance, confidence)
+    confidence = round(max(buy_prob, sell_prob), 2)
 
-    if direction != "HOLD":
-        log_trade(pair, direction, confidence, score, balance)
+    # =========================
+    # RISK + SIMULATION
+    # =========================
+    risk_data = risk_engine(balance, risk)
+    mc = monte_carlo(balance, confidence, vol["regime"])
 
     return {
         "pair": pair,
@@ -298,25 +248,19 @@ def trade(pair: str, balance: float, risk: float):
         "signal": {
             "direction": direction,
             "confidence": confidence,
-            "score": round(score, 4),
-            "probability": round(prob, 4)
+            "score": round(score, 3),
+            "buy_probability": round(buy_prob, 2),
+            "sell_probability": round(sell_prob, 2)
         },
 
-        "regime": regime,
+        "volatility": vol,
+        "news": news,
+
         "risk": risk_data,
         "simulation": mc,
-        "journal_size": len(TRADE_JOURNAL),
 
-        "projection": {
+        "final_projection": {
             "start_balance": balance,
             "expected_end_balance": mc["expected"]
         }
     }
-
-
-# =========================
-# JOURNAL ENDPOINT
-# =========================
-@app.get("/journal")
-def journal():
-    return {"trades": TRADE_JOURNAL}
