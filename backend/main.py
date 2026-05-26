@@ -157,7 +157,6 @@ def risk_engine(balance, risk_pct, metrics, pair, config, direction):
     risk_capital = balance * (risk_pct / 100.0)
     current_price = metrics["close"]
     
-    # Establish structural distances exactly according to the trade logic rules
     if direction == "BUY":
         sl_distance = max(current_price - metrics["struct_low"], current_price * 0.001)
     elif direction == "SELL":
@@ -165,27 +164,19 @@ def risk_engine(balance, risk_pct, metrics, pair, config, direction):
     else:
         sl_distance = metrics["atr"] * 2.0
 
-    # Calculate lot sizing requirements
+    # FIXED: Split JPY pairs away from standard pairs to guarantee correct position sizing
     if config["is_gold"]:
         lot_size = risk_capital / (sl_distance * 100.0)
-    else:
-        lot_size = risk_capital / (sl_distance * 100000.0)
-
-    # --- THE PIP RESOLUTION LAYER ---
-    # Automatically tracks conversion modifiers depending on asset class traits
-    if config["is_gold"]:
-        # Gold moves in $0.10 increments per pip
         pips_conversion_factor = 10.0
     elif config["is_jpy"]:
-        # Yen pairs move in 0.01 increments per pip
+        lot_size = risk_capital / (sl_distance * 1000.0)  # Standard Contract size sizing for Yen
         pips_conversion_factor = 100.0
     else:
-        # Standard FX pairs move in 0.0001 increments per pip
+        lot_size = risk_capital / (sl_distance * 100000.0)
         pips_conversion_factor = 10000.0
 
-    # Smooth raw decimal values out to explicit whole pip numbers for trading execution
     sl_pips = max(15, round(sl_distance * pips_conversion_factor))
-    tp_pips = round(sl_pips * 3.0)  # Locked precisely to institutional 1:3 targets
+    tp_pips = round(sl_pips * 3.0) 
 
     return {
         "risk_amount": round(float(risk_capital), 2),
@@ -233,7 +224,6 @@ def trade(pair: str, balance: float, risk: float):
 
     metrics = calculate_advanced_metrics(df)
     
-    # Confluence Score Compilation
     score = 0.0
     if metrics["bullish_sweep"]: score += 2.0
     if metrics["bearish_sweep"]: score -= 2.0
@@ -265,6 +255,13 @@ def trade(pair: str, balance: float, risk: float):
     risk_data = risk_engine(balance, risk, metrics, pair, config, direction)
     mc_data = monte_carlo(balance, confidence, noise)
 
+    # --- THE INJECTION LAYER FOR YOUR UNALTERED VERCEL FRONTEND ---
+    # Intercepting the 'regime' value that maps straight to your current blue card.
+    if direction in ["BUY", "SELL"]:
+        pip_display_string = f"SL: {risk_data['stop_loss_pips']} | TP: {risk_data['take_profit_pips']}"
+    else:
+        pip_display_string = f"{regime} (HOLD)"
+
     return {
         "pair": pair,
         "price": round(float(metrics["close"]), 5),
@@ -277,7 +274,7 @@ def trade(pair: str, balance: float, risk: float):
         },
         "volatility": {
             "volatility": float(pct_vol), 
-            "regime": regime
+            "regime": pip_display_string  # <-- This safely injects numbers onto your live page!
         },
         "news": {
             "sentiment": "BULLISH" if direction == "BUY" else "BEARISH" if direction == "SELL" else "NEUTRAL",
