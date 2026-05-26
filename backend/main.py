@@ -7,7 +7,7 @@ import requests
 
 app = FastAPI()
 
-# Cleaned allowed origins matching your exact initial setup
+# Allowed deployment origins matching your exact setup
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -43,7 +43,7 @@ session.headers.update({
 })
 
 # ==========================================
-# RESILIENT FASTER DATA ENGINE
+# RESILIENT DATA ENGINE
 # ==========================================
 def fetch_primary_yf(symbol, period, interval, is_gold=False):
     try:
@@ -60,7 +60,7 @@ def fetch_primary_yf(symbol, period, interval, is_gold=False):
                 multi_level_index=False
             )
             
-        if df is not None and not df.empty and len(df) >= 30: # Switched to 30 to give SMC enough lookback rows
+        if df is not None and not df.empty and len(df) >= 30:
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
             df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
@@ -103,7 +103,7 @@ def get_data(pair, interval="1h", period="14d"):
     return fetch_fallback_api(pair)
 
 # ==========================================
-# INSTITUTIONAL SMART MONEY CONCEPTS ENGINE
+# STRATEGY CALCULATION ENGINE
 # ==========================================
 def calculate_advanced_metrics(df):
     close = df["Close"]
@@ -112,37 +112,25 @@ def calculate_advanced_metrics(df):
     
     last_close = float(close.iloc[-1])
     
-    # --- 1. SMART MONEY LIQUIDITY SWEEPS ---
-    # Scan previous 24 candles excluding current execution candle
+    # --- SMART MONEY CONCEPTS TRADING LOGIC ---
     lookback_highs = high.iloc[-25:-1].max()
     lookback_lows = low.iloc[-25:-1].min()
     
-    # Bullish Sweep: Price breaks below recent structural lows to fish stops, then closes back inside
     bullish_sweep = bool((low.iloc[-1] < lookback_lows) and (last_close > lookback_lows))
-    # Bearish Sweep: Price pierces above structural resistance highs, then closes back down
     bearish_sweep = bool((high.iloc[-1] > lookback_highs) and (last_close < lookback_highs))
     
-    # --- 2. FAIR VALUE GAPS (FVG) / IMBALANCE ---
-    # Look back at recent 3-candle execution structures to locate unfilled market gaps
-    # Bullish FVG: Candle 1 High does not overlap Candle 3 Low
     bullish_fvg = bool(low.iloc[-1] > high.iloc[-3])
-    # Bearish FVG: Candle 1 Low does not overlap Candle 3 High
     bearish_fvg = bool(high.iloc[-1] < low.iloc[-3])
     
-    # --- 3. CHANGE OF CHARACTER (CHOCH) / STRUCTURAL SHIFTS ---
-    # Detect sharp immediate trend breaks violating short-term local pivot points
     recent_pivot_high = high.iloc[-6:-1].max()
     recent_pivot_low = low.iloc[-6:-1].min()
     
     bullish_choch = bool(last_close > recent_pivot_high and close.iloc[-2] <= recent_pivot_high)
     bearish_choch = bool(last_close < recent_pivot_low and close.iloc[-2] >= recent_pivot_low)
     
-    # --- 4. BACKUP STRUCTURAL ORDER BLOCK STOP CALCULATIONS ---
-    # If standard order blocks aren't fully formed, define precise structural targets
     struct_low = float(low.iloc[-12:].min())
     struct_high = float(high.iloc[-12:].max())
     
-    # Maintain traditional volatility metric purely for the simulation noise scaling
     tr1 = high - low
     tr2 = (high - close.shift(1)).abs()
     tr3 = (low - close.shift(1)).abs()
@@ -163,41 +151,51 @@ def calculate_advanced_metrics(df):
     }
 
 # ==========================================
-# ALIGNED RISK ENGINE USING ORDER BLOCKS
+# UPGRADED AUTOMATED PIP RISK ENGINE
 # ==========================================
 def risk_engine(balance, risk_pct, metrics, pair, config, direction):
     risk_capital = balance * (risk_pct / 100.0)
     current_price = metrics["close"]
     
-    # Instantly calculate tight institutional Stop Losses exactly at structural swing points
+    # Establish structural distances exactly according to the trade logic rules
     if direction == "BUY":
         sl_distance = max(current_price - metrics["struct_low"], current_price * 0.001)
     elif direction == "SELL":
         sl_distance = max(metrics["struct_high"] - current_price, current_price * 0.001)
     else:
-        # Balanced baseline for neutral HOLD signals
         sl_distance = metrics["atr"] * 2.0
 
+    # Calculate lot sizing requirements
     if config["is_gold"]:
         lot_size = risk_capital / (sl_distance * 100.0)
-        pips_factor = 10.0
     else:
-        pip_size = 0.01 if config["is_jpy"] else 0.0001
         lot_size = risk_capital / (sl_distance * 100000.0)
-        pips_factor = pip_size
 
-    sl_pips = max(15, round(sl_distance / pips_factor))
-    
-    # Smart Money Strategies target massive institutional 1:3 reward metrics minimum
+    # --- THE PIP RESOLUTION LAYER ---
+    # Automatically tracks conversion modifiers depending on asset class traits
+    if config["is_gold"]:
+        # Gold moves in $0.10 increments per pip
+        pips_conversion_factor = 10.0
+    elif config["is_jpy"]:
+        # Yen pairs move in 0.01 increments per pip
+        pips_conversion_factor = 100.0
+    else:
+        # Standard FX pairs move in 0.0001 increments per pip
+        pips_conversion_factor = 10000.0
+
+    # Smooth raw decimal values out to explicit whole pip numbers for trading execution
+    sl_pips = max(15, round(sl_distance * pips_conversion_factor))
+    tp_pips = round(sl_pips * 3.0)  # Locked precisely to institutional 1:3 targets
+
     return {
         "risk_amount": round(float(risk_capital), 2),
         "lot_size": max(0.01, round(float(lot_size), 2)),
         "stop_loss_pips": int(sl_pips),
-        "take_profit_pips": int(round(sl_pips * 3.0)) # Upgraded to institutional 1:3 ratio
+        "take_profit_pips": int(tp_pips)
     }
 
 # ==========================================
-# HIGH SPEED MONTE CARLO SIMULATOR
+# MONTE CARLO SIMULATOR
 # ==========================================
 def monte_carlo(balance, confidence, regime_noise):
     simulations = 500
@@ -215,7 +213,7 @@ def monte_carlo(balance, confidence, regime_noise):
     }
 
 # ==========================================
-# MAIN INTERFACE (STRICTLY ORIGINAL KEYS)
+# MAIN INTERFACE
 # ==========================================
 @app.get("/trade")
 def trade(pair: str, balance: float, risk: float):
@@ -235,22 +233,15 @@ def trade(pair: str, balance: float, risk: float):
 
     metrics = calculate_advanced_metrics(df)
     
-    # --- CONFLUENCE SCORE ASSEMBLY ENGINE ---
+    # Confluence Score Compilation
     score = 0.0
-    
-    # Factor 1: Liquidity hunts
     if metrics["bullish_sweep"]: score += 2.0
     if metrics["bearish_sweep"]: score -= 2.0
-    
-    # Factor 2: Structural Change of Character
-    if metrics["bullish_choch"]: score += 1.5
-    if metrics["bearish_choch"]: score -= 1.5
-    
-    # Factor 3: Open Fair Value Gap imbalances
-    if metrics["bullish_fvg"]: score += 1.0
-    if metrics["bearish_fvg"]: score -= 1.0
+    if metrics["bullish_choch"]:  score += 1.5
+    if metrics["bearish_choch"]:  score -= 1.5
+    if metrics["bullish_fvg"]:   score += 1.0
+    if metrics["bearish_fvg"]:   score -= 1.0
 
-    # Map directly back to your frontend's probability expectations
     buy_prob = max(5.0, min(95.0, 50.0 + (score * 15.0)))
     sell_prob = 100.0 - buy_prob
 
@@ -263,7 +254,6 @@ def trade(pair: str, balance: float, risk: float):
 
     confidence = round(max(buy_prob, sell_prob), 2)
     
-    # Volatility evaluation mapping
     pct_vol = metrics["atr"] / metrics["close"]
     if pct_vol < 0.005:
         regime, noise = "LOW_VOL", 0.005
