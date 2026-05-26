@@ -7,7 +7,7 @@ import requests
 
 app = FastAPI()
 
-# Allowed deployment origins matching your exact setup
+# Allowed deployment origins matching your setup
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -151,7 +151,7 @@ def calculate_advanced_metrics(df):
     }
 
 # ==========================================
-# UPGRADED AUTOMATED PIP RISK ENGINE
+# AUTOMATED PIP RISK ENGINE
 # ==========================================
 def risk_engine(balance, risk_pct, metrics, pair, config, direction):
     risk_capital = balance * (risk_pct / 100.0)
@@ -164,12 +164,12 @@ def risk_engine(balance, risk_pct, metrics, pair, config, direction):
     else:
         sl_distance = metrics["atr"] * 2.0
 
-    # FIXED: Split JPY pairs away from standard pairs to guarantee correct position sizing
+    # Handles specialized contract sizing splits
     if config["is_gold"]:
         lot_size = risk_capital / (sl_distance * 100.0)
         pips_conversion_factor = 10.0
     elif config["is_jpy"]:
-        lot_size = risk_capital / (sl_distance * 1000.0)  # Standard Contract size sizing for Yen
+        lot_size = risk_capital / (sl_distance * 1000.0)
         pips_conversion_factor = 100.0
     else:
         lot_size = risk_capital / (sl_distance * 100000.0)
@@ -255,13 +255,6 @@ def trade(pair: str, balance: float, risk: float):
     risk_data = risk_engine(balance, risk, metrics, pair, config, direction)
     mc_data = monte_carlo(balance, confidence, noise)
 
-    # --- THE INJECTION LAYER FOR YOUR UNALTERED VERCEL FRONTEND ---
-    # Intercepting the 'regime' value that maps straight to your current blue card.
-    if direction in ["BUY", "SELL"]:
-        pip_display_string = f"SL: {risk_data['stop_loss_pips']} | TP: {risk_data['take_profit_pips']}"
-    else:
-        pip_display_string = f"{regime} (HOLD)"
-
     return {
         "pair": pair,
         "price": round(float(metrics["close"]), 5),
@@ -274,14 +267,14 @@ def trade(pair: str, balance: float, risk: float):
         },
         "volatility": {
             "volatility": float(pct_vol), 
-            "regime": pip_display_string  # <-- This safely injects numbers onto your live page!
+            "regime": regime  # CONDITION MET: Restored to clean, native volatility string values
         },
         "news": {
             "sentiment": "BULLISH" if direction == "BUY" else "BEARISH" if direction == "SELL" else "NEUTRAL",
             "score": int(confidence),
             "bias": 1 if direction == "BUY" else -1 if direction == "SELL" else 0
         },
-        "risk": risk_data,
+        "risk": risk_data, # CONDITION MET: Outfits clean `stop_loss_pips` and `take_profit_pips` variables
         "simulation": mc_data,
         "final_projection": {
             "start_balance": float(balance),
