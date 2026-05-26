@@ -47,8 +47,6 @@ session.headers.update({
 # ==========================================
 def fetch_primary_yf(symbol, period, interval):
     try:
-        # Added multi_level_index=False to natively flatten multi-index structures 
-        # that break when pulling commodity futures data (like GC=F).
         df = yf.download(
             tickers=symbol, 
             period=period, 
@@ -58,8 +56,16 @@ def fetch_primary_yf(symbol, period, interval):
             multi_level_index=False
         )
         if df is not None and not df.empty and len(df) >= 14:
+            # Drop upper multi-index layers if Yahoo adds them for commodity tokens
             if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel(1)
+                df.columns = df.columns.get_level_values(0)
+            
+            # If columns end up wrapped as tuple singletons, stringify them cleanly
+            df.columns = [col[0] if isinstance(col, tuple) else col for col in df.columns]
+            
+            # Force uniform uppercase strings across column references
+            df.columns = [str(col).strip().capitalize() for col in df.columns]
+            
             return df.dropna()
     except Exception:
         pass
@@ -99,6 +105,7 @@ def get_data(pair, interval="1h", period="14d"):
 # REENGINEERED HIGH-ALPHA EXECUTIONS
 # ==========================================
 def calculate_advanced_metrics(df):
+    # Safe references using standardized fallback strings
     close = df["Close"]
     high = df.get("High", close)
     low = df.get("Low", close)
@@ -114,7 +121,11 @@ def calculate_advanced_metrics(df):
     ema_fast = close.ewm(span=12, adjust=False).mean()
     ema_slow = close.ewm(span=26, adjust=False).mean()
     macd_hist = ema_fast - ema_slow - (ema_fast - ema_slow).ewm(span=9, adjust=False).mean()
-    trend_long = close.iloc[-1] > close.ewm(span=50, adjust=False).mean().iloc[-1]
+    
+    # Extract safe primitive scalar from tail elements
+    last_close = float(close.iloc[-1])
+    last_ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
+    trend_long = bool(last_close > last_ema50)
 
     # 3. Traditional RSI Core
     delta = close.diff()
@@ -123,10 +134,10 @@ def calculate_advanced_metrics(df):
     rsi = 100 - (100 / (1 + (gain / loss))).fillna(50)
 
     return {
-        "close": close.iloc[-1],
-        "atr": atr.iloc[-1] if not atr.empty else close.iloc[-1] * 0.0015,
-        "macd_hist": macd_hist.iloc[-1],
-        "rsi": rsi.iloc[-1],
+        "close": last_close,
+        "atr": float(atr.iloc[-1]) if not atr.empty else last_close * 0.0015,
+        "macd_hist": float(macd_hist.iloc[-1]),
+        "rsi": float(rsi.iloc[-1]),
         "trend_long": trend_long
     }
 
@@ -150,10 +161,10 @@ def risk_engine(balance, risk_pct, metrics, pair, config):
     sl_pips = round(sl_distance / pips_factor)
     
     return {
-        "risk_amount": round(risk_capital, 2),
-        "lot_size": max(0.01, round(lot_size, 2)),
-        "stop_loss_pips": sl_pips,
-        "take_profit_pips": round(sl_pips * 2.0)
+        "risk_amount": round(float(risk_capital), 2),
+        "lot_size": max(0.01, round(float(lot_size), 2)),
+        "stop_loss_pips": int(sl_pips),
+        "take_profit_pips": int(round(sl_pips * 2.0))
     }
 
 # ==========================================
@@ -198,7 +209,7 @@ def trade(pair: str, balance: float, risk: float):
     metrics = calculate_advanced_metrics(df)
     
     # Mathematical Multi-Factor Analysis
-    score = 0
+    score = 0.0
     if metrics["macd_hist"] > 0: score += 1.5
     else: score -= 1.5
     if metrics["trend_long"]: score += 1.0
@@ -237,10 +248,10 @@ def trade(pair: str, balance: float, risk: float):
         "price": round(float(metrics["close"]), 5),
         "signal": {
             "direction": direction,
-            "confidence": confidence,
-            "score": round(score, 3),
-            "buy_probability": round(buy_prob, 2),
-            "sell_probability": round(sell_prob, 2)
+            "confidence": float(confidence),
+            "score": round(float(score), 3),
+            "buy_probability": round(float(buy_prob), 2),
+            "sell_probability": round(float(sell_prob), 2)
         },
         "volatility": {
             "volatility": float(pct_vol), 
@@ -254,7 +265,7 @@ def trade(pair: str, balance: float, risk: float):
         "risk": risk_data,
         "simulation": mc_data,
         "final_projection": {
-            "start_balance": balance,
-            "expected_end_balance": mc_data["expected"]
+            "start_balance": float(balance),
+            "expected_end_balance": float(mc_data["expected"])
         }
     }
