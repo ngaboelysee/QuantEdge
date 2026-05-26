@@ -193,9 +193,9 @@ export default function Page() {
 
           </div>
 
-          {/* STATS */}
+          {/* STATS CARDS GRID */}
           {data && (
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 xl:grid-cols-6 gap-4">
 
               <StatCard
                 title="Sentiment"
@@ -219,6 +219,20 @@ export default function Page() {
                 title="Risk"
                 value={`$${data.risk.risk_amount}`}
                 color="red"
+              />
+
+              {/* DEDICATED STOP LOSS PIPS BLOCK */}
+              <StatCard
+                title="Stop Loss"
+                value={`${data.risk.stop_loss_pips} Pips`}
+                color="red"
+              />
+
+              {/* DEDICATED TAKE PROFIT PIPS BLOCK */}
+              <StatCard
+                title="Take Profit"
+                value={`${data.risk.take_profit_pips} Pips`}
+                color="green"
               />
 
             </div>
