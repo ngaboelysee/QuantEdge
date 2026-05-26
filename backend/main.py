@@ -47,7 +47,16 @@ session.headers.update({
 # ==========================================
 def fetch_primary_yf(symbol, period, interval):
     try:
-        df = yf.download(tickers=symbol, period=period, interval=interval, session=session, progress=False)
+        # Added multi_level_index=False to natively flatten multi-index structures 
+        # that break when pulling commodity futures data (like GC=F).
+        df = yf.download(
+            tickers=symbol, 
+            period=period, 
+            interval=interval, 
+            session=session, 
+            progress=False,
+            multi_level_index=False
+        )
         if df is not None and not df.empty and len(df) >= 14:
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.droplevel(1)
