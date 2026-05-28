@@ -6,10 +6,9 @@ import dynamic from "next/dynamic";
 import { getTrade } from "../lib/api";
 import StatCard from "../components/StatCard";
 
-const CandleChart = dynamic(
-  () => import("../components/CandleChart"),
-  { ssr: false }
-);
+const CandleChart = dynamic(() => import("../components/CandleChart"), {
+  ssr: false,
+});
 
 const PAIRS = [
   "EURUSD",
@@ -29,13 +28,10 @@ export default function Page() {
 
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   const [history, setHistory] = useState<any[]>([]);
 
   async function analyze() {
     setLoading(true);
-    setError(null);
 
     try {
       const res = await getTrade(pair, balance, risk);
@@ -43,10 +39,8 @@ export default function Page() {
 
       const trade = {
         pair,
-        signal: res?.signal?.direction || "N/A",
-        confidence: res?.signal?.confidence || 0,
-        balance,
-        risk,
+        signal: res?.signal?.direction,
+        confidence: res?.signal?.confidence,
         time: new Date().toLocaleTimeString(),
       };
 
@@ -54,9 +48,8 @@ export default function Page() {
       setHistory(updated);
 
       localStorage.setItem("trade_history", JSON.stringify(updated));
-    } catch (err: any) {
+    } catch (err) {
       console.log(err);
-      setError("Failed to fetch trade data");
     }
 
     setLoading(false);
@@ -76,6 +69,14 @@ export default function Page() {
       ? "text-red-400"
       : "text-gray-400";
 
+  // TradingView style formatting
+  const formatPrice = (value: any) => {
+    if (value === null || value === undefined) return "-";
+    return Number(value).toFixed(
+      pair === "USDJPY" ? 3 : pair === "XAUUSD" ? 2 : 5
+    );
+  };
+
   return (
     <div className="min-h-screen px-4 lg:px-8 py-6">
 
@@ -87,10 +88,6 @@ export default function Page() {
         <p className="text-gray-500">
           AI-powered trading engine + real market visualization
         </p>
-
-        {error && (
-          <p className="text-red-400 mt-2">{error}</p>
-        )}
       </div>
 
       {/* GRID */}
@@ -98,10 +95,7 @@ export default function Page() {
 
         {/* LEFT PANEL */}
         <div className="xl:col-span-3 glass p-6">
-
-          <p className="text-gray-400 text-sm mb-4">
-            Trade Setup
-          </p>
+          <p className="text-gray-400 text-sm mb-4">Trade Setup</p>
 
           <select
             className="input mb-4"
@@ -129,21 +123,20 @@ export default function Page() {
 
           <button
             onClick={analyze}
-            disabled={loading}
             className="primary-btn w-full py-3 rounded-xl font-bold"
           >
             {loading ? "Analyzing..." : "Analyze Trade"}
           </button>
         </div>
 
-        {/* RIGHT PANEL */}
+        {/* RIGHT */}
         <div className="xl:col-span-9 space-y-6">
 
-          {/* SIGNAL */}
+          {/* SIGNAL + CHART */}
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
+            {/* SIGNAL */}
             <div className="xl:col-span-2 glass p-6">
-
               {!data ? (
                 <div className="text-gray-500">
                   Run analysis to generate signal
@@ -157,10 +150,18 @@ export default function Page() {
                   <p className="text-gray-400 mt-3">
                     Confidence: {data.signal.confidence}%
                   </p>
+
+                  <div className="w-full h-2 bg-black/40 rounded mt-4">
+                    <div
+                      className="h-2 bg-green-400 rounded"
+                      style={{ width: `${data.signal.confidence}%` }}
+                    />
+                  </div>
                 </>
               )}
             </div>
 
+            {/* CHART */}
             <div className="glass p-4">
               {!data ? (
                 <div className="text-gray-500">
@@ -176,28 +177,58 @@ export default function Page() {
           {data && (
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
 
-              <StatCard title="Pair" value={data.pair} />
-              <StatCard title="Price" value={data.price} />
-              <StatCard title="Direction" value={data.signal.direction} />
-              <StatCard title="Confidence" value={`${data.signal.confidence}%`} />
-              <StatCard title="Score" value={data.signal.score} />
+              <StatCard title="Sentiment" value={data.news?.sentiment || "N/A"} color="yellow" />
+              <StatCard title="Volatility" value={data.volatility?.regime || "N/A"} color="blue" />
+              <StatCard title="Lot Size" value={data.risk.lot_size} color="green" />
+              <StatCard title="Risk" value={`$${data.risk.risk_amount}`} color="red" />
 
-              <StatCard title="Risk" value={`$${data.risk.risk_amount}`} />
-              <StatCard title="Lot Size" value={data.risk.lot_size} />
-              <StatCard title="RR" value={`1:${data.risk.risk_reward_ratio}`} />
+              <StatCard title="Entry" value={formatPrice(data.risk.entry_price)} color="white" />
+              <StatCard title="SL" value={formatPrice(data.risk.stop_loss_price)} color="red" />
+              <StatCard title="TP" value={formatPrice(data.risk.take_profit_price)} color="green" />
+              <StatCard title="RR" value={`1:${data.risk.risk_reward_ratio}`} color="yellow" />
+            </div>
+          )}
+
+          {/* 🔥 MONTE CARLO (RESTORED PROPERLY) */}
+          {data?.simulation && (
+            <div className="glass p-6">
+              <h2 className="text-2xl font-black mb-4">
+                Monte Carlo Simulation
+              </h2>
+
+              <div className="grid grid-cols-3 gap-4">
+
+                <div>
+                  <p className="text-gray-400">Expected</p>
+                  <p className="text-2xl font-bold">
+                    ${data.simulation.expected}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-gray-400">Best</p>
+                  <p className="text-2xl font-bold text-green-400">
+                    ${data.simulation.best}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-gray-400">Worst</p>
+                  <p className="text-2xl font-bold text-red-400">
+                    ${data.simulation.worst}
+                  </p>
+                </div>
+
+              </div>
             </div>
           )}
 
           {/* HISTORY */}
           {history.length > 0 && (
             <div className="glass p-6">
-
-              <h2 className="text-xl font-bold mb-4">
-                Trade History
-              </h2>
+              <h2 className="text-xl font-bold mb-4">Trade History</h2>
 
               <div className="space-y-2 text-sm">
-
                 {history.map((t, i) => (
                   <div
                     key={i}
@@ -206,12 +237,9 @@ export default function Page() {
                     <span>{t.pair}</span>
                     <span>{t.signal}</span>
                     <span>{t.confidence}%</span>
-                    <span className="text-gray-500">
-                      {t.time}
-                    </span>
+                    <span className="text-gray-500">{t.time}</span>
                   </div>
                 ))}
-
               </div>
             </div>
           )}
