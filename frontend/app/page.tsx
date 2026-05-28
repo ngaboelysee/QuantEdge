@@ -6,9 +6,10 @@ import dynamic from "next/dynamic";
 import { getTrade } from "../lib/api";
 import StatCard from "../components/StatCard";
 
-const CandleChart = dynamic(() => import("../components/CandleChart"), {
-  ssr: false,
-});
+const CandleChart = dynamic(
+  () => import("../components/CandleChart"),
+  { ssr: false }
+);
 
 const PAIRS = [
   "EURUSD",
@@ -28,6 +29,7 @@ export default function Page() {
 
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+
   const [history, setHistory] = useState<any[]>([]);
 
   async function analyze() {
@@ -35,19 +37,27 @@ export default function Page() {
 
     try {
       const res = await getTrade(pair, balance, risk);
+
       setData(res);
 
       const trade = {
         pair,
-        signal: res?.signal?.direction,
-        confidence: res?.signal?.confidence,
+        signal: res.signal.direction,
+        confidence: res.signal.confidence,
+        balance,
+        risk,
         time: new Date().toLocaleTimeString(),
       };
 
       const updated = [trade, ...history];
+
       setHistory(updated);
 
-      localStorage.setItem("trade_history", JSON.stringify(updated));
+      localStorage.setItem(
+        "trade_history",
+        JSON.stringify(updated)
+      );
+
     } catch (err) {
       console.log(err);
     }
@@ -69,14 +79,6 @@ export default function Page() {
       ? "text-red-400"
       : "text-gray-400";
 
-  // TradingView style formatting
-  const formatPrice = (value: any) => {
-    if (value === null || value === undefined) return "-";
-    return Number(value).toFixed(
-      pair === "USDJPY" ? 3 : pair === "XAUUSD" ? 2 : 5
-    );
-  };
-
   return (
     <div className="min-h-screen px-4 lg:px-8 py-6">
 
@@ -93,10 +95,14 @@ export default function Page() {
       {/* GRID */}
       <div className="max-w-[1600px] mx-auto grid grid-cols-1 xl:grid-cols-12 gap-6">
 
-        {/* LEFT PANEL */}
+        {/* LEFT CONTROL PANEL */}
         <div className="xl:col-span-3 glass p-6">
-          <p className="text-gray-400 text-sm mb-4">Trade Setup</p>
 
+          <p className="text-gray-400 text-sm mb-4">
+            Trade Setup
+          </p>
+
+          {/* PAIR */}
           <select
             className="input mb-4"
             value={pair}
@@ -107,18 +113,24 @@ export default function Page() {
             ))}
           </select>
 
+          {/* BALANCE */}
           <input
             className="input mb-4"
             type="number"
             value={balance}
-            onChange={(e) => setBalance(Number(e.target.value))}
+            onChange={(e) =>
+              setBalance(Number(e.target.value))
+            }
           />
 
+          {/* RISK */}
           <input
             className="input mb-6"
             type="number"
             value={risk}
-            onChange={(e) => setRisk(Number(e.target.value))}
+            onChange={(e) =>
+              setRisk(Number(e.target.value))
+            }
           />
 
           <button
@@ -127,16 +139,18 @@ export default function Page() {
           >
             {loading ? "Analyzing..." : "Analyze Trade"}
           </button>
+
         </div>
 
-        {/* RIGHT */}
+        {/* RIGHT PANEL */}
         <div className="xl:col-span-9 space-y-6">
 
-          {/* SIGNAL + CHART */}
+          {/* TOP SECTION */}
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
             {/* SIGNAL */}
             <div className="xl:col-span-2 glass p-6">
+
               {!data ? (
                 <div className="text-gray-500">
                   Run analysis to generate signal
@@ -154,15 +168,19 @@ export default function Page() {
                   <div className="w-full h-2 bg-black/40 rounded mt-4">
                     <div
                       className="h-2 bg-green-400 rounded"
-                      style={{ width: `${data.signal.confidence}%` }}
+                      style={{
+                        width: `${data.signal.confidence}%`,
+                      }}
                     />
                   </div>
                 </>
               )}
+
             </div>
 
-            {/* CHART */}
+            {/* CHART PANEL */}
             <div className="glass p-4">
+
               {!data ? (
                 <div className="text-gray-500">
                   Chart appears after analysis
@@ -170,28 +188,60 @@ export default function Page() {
               ) : (
                 <CandleChart />
               )}
+
             </div>
+
           </div>
 
-          {/* STATS */}
+          {/* STATS CARDS GRID */}
           {data && (
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 xl:grid-cols-6 gap-4">
 
-              <StatCard title="Sentiment" value={data.news?.sentiment || "N/A"} color="yellow" />
-              <StatCard title="Volatility" value={data.volatility?.regime || "N/A"} color="blue" />
-              <StatCard title="Lot Size" value={data.risk.lot_size} color="green" />
-              <StatCard title="Risk" value={`$${data.risk.risk_amount}`} color="red" />
+              <StatCard
+                title="Sentiment"
+                value={data.news.sentiment}
+                color="yellow"
+              />
 
-              <StatCard title="Entry" value={formatPrice(data.risk.entry_price)} color="white" />
-              <StatCard title="SL" value={formatPrice(data.risk.stop_loss_price)} color="red" />
-              <StatCard title="TP" value={formatPrice(data.risk.take_profit_price)} color="green" />
-              <StatCard title="RR" value={`1:${data.risk.risk_reward_ratio}`} color="yellow" />
+              <StatCard
+                title="Volatility"
+                value={data.volatility.regime}
+                color="blue"
+              />
+
+              <StatCard
+                title="Lot Size"
+                value={data.risk.lot_size}
+                color="green"
+              />
+
+              <StatCard
+                title="Risk"
+                value={`$${data.risk.risk_amount}`}
+                color="red"
+              />
+
+              {/* DEDICATED STOP LOSS PIPS BLOCK */}
+              <StatCard
+                title="Stop Loss"
+                value={`${data.risk.stop_loss_pips} Pips`}
+                color="red"
+              />
+
+              {/* DEDICATED TAKE PROFIT PIPS BLOCK */}
+              <StatCard
+                title="Take Profit"
+                value={`${data.risk.take_profit_pips} Pips`}
+                color="green"
+              />
+
             </div>
           )}
 
-          {/* 🔥 MONTE CARLO (RESTORED PROPERLY) */}
-          {data?.simulation && (
+          {/* MONTE CARLO */}
+          {data && (
             <div className="glass p-6">
+
               <h2 className="text-2xl font-black mb-4">
                 Monte Carlo Simulation
               </h2>
@@ -220,15 +270,20 @@ export default function Page() {
                 </div>
 
               </div>
+
             </div>
           )}
 
           {/* HISTORY */}
           {history.length > 0 && (
             <div className="glass p-6">
-              <h2 className="text-xl font-bold mb-4">Trade History</h2>
+
+              <h2 className="text-xl font-bold mb-4">
+                Trade History
+              </h2>
 
               <div className="space-y-2 text-sm">
+
                 {history.map((t, i) => (
                   <div
                     key={i}
@@ -237,10 +292,14 @@ export default function Page() {
                     <span>{t.pair}</span>
                     <span>{t.signal}</span>
                     <span>{t.confidence}%</span>
-                    <span className="text-gray-500">{t.time}</span>
+                    <span className="text-gray-500">
+                      {t.time}
+                    </span>
                   </div>
                 ))}
+
               </div>
+
             </div>
           )}
 
