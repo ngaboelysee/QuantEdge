@@ -37,7 +37,6 @@ export default function Page() {
 
     try {
       const res = await getTrade(pair, balance, risk);
-
       setData(res);
 
       const trade = {
@@ -53,11 +52,7 @@ export default function Page() {
 
       setHistory(updated);
 
-      localStorage.setItem(
-        "trade_history",
-        JSON.stringify(updated)
-      );
-
+      localStorage.setItem("trade_history", JSON.stringify(updated));
     } catch (err) {
       console.log(err);
     }
@@ -95,14 +90,13 @@ export default function Page() {
       {/* GRID */}
       <div className="max-w-[1600px] mx-auto grid grid-cols-1 xl:grid-cols-12 gap-6">
 
-        {/* LEFT CONTROL PANEL */}
+        {/* LEFT PANEL */}
         <div className="xl:col-span-3 glass p-6">
 
           <p className="text-gray-400 text-sm mb-4">
             Trade Setup
           </p>
 
-          {/* PAIR */}
           <select
             className="input mb-4"
             value={pair}
@@ -113,24 +107,18 @@ export default function Page() {
             ))}
           </select>
 
-          {/* BALANCE */}
           <input
             className="input mb-4"
             type="number"
             value={balance}
-            onChange={(e) =>
-              setBalance(Number(e.target.value))
-            }
+            onChange={(e) => setBalance(Number(e.target.value))}
           />
 
-          {/* RISK */}
           <input
             className="input mb-6"
             type="number"
             value={risk}
-            onChange={(e) =>
-              setRisk(Number(e.target.value))
-            }
+            onChange={(e) => setRisk(Number(e.target.value))}
           />
 
           <button
@@ -139,13 +127,12 @@ export default function Page() {
           >
             {loading ? "Analyzing..." : "Analyze Trade"}
           </button>
-
         </div>
 
         {/* RIGHT PANEL */}
         <div className="xl:col-span-9 space-y-6">
 
-          {/* TOP SECTION */}
+          {/* SIGNAL + CHART */}
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
             {/* SIGNAL */}
@@ -175,12 +162,10 @@ export default function Page() {
                   </div>
                 </>
               )}
-
             </div>
 
-            {/* CHART PANEL */}
+            {/* CHART */}
             <div className="glass p-4">
-
               {!data ? (
                 <div className="text-gray-500">
                   Chart appears after analysis
@@ -188,14 +173,12 @@ export default function Page() {
               ) : (
                 <CandleChart />
               )}
-
             </div>
-
           </div>
 
-          {/* STATS CARDS GRID */}
+          {/* STATS (UPDATED WITH TRADE LEVELS) */}
           {data && (
-            <div className="grid grid-cols-2 xl:grid-cols-6 gap-4">
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
 
               <StatCard
                 title="Sentiment"
@@ -221,18 +204,32 @@ export default function Page() {
                 color="red"
               />
 
-              {/* DEDICATED STOP LOSS PIPS BLOCK */}
+              {/* 🔥 ENTRY PRICE */}
+              <StatCard
+                title="Entry"
+                value={data.risk.entry_price}
+                color="white"
+              />
+
+              {/* 🔥 STOP LOSS + PIPS */}
               <StatCard
                 title="Stop Loss"
-                value={`${data.risk.stop_loss_pips} Pips`}
+                value={`${data.risk.stop_loss_price} (${data.risk.stop_loss_pips} pips)`}
                 color="red"
               />
 
-              {/* DEDICATED TAKE PROFIT PIPS BLOCK */}
+              {/* 🔥 TAKE PROFIT + PIPS */}
               <StatCard
                 title="Take Profit"
-                value={`${data.risk.take_profit_pips} Pips`}
+                value={`${data.risk.take_profit_price} (${data.risk.take_profit_pips} pips)`}
                 color="green"
+              />
+
+              {/* 🔥 RISK REWARD */}
+              <StatCard
+                title="Risk:Reward"
+                value={`1:${data.risk.risk_reward_ratio}`}
+                color="yellow"
               />
 
             </div>
@@ -270,7 +267,6 @@ export default function Page() {
                 </div>
 
               </div>
-
             </div>
           )}
 
@@ -299,7 +295,6 @@ export default function Page() {
                 ))}
 
               </div>
-
             </div>
           )}
 
