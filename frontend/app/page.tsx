@@ -49,10 +49,10 @@ export default function Page() {
       };
 
       const updated = [trade, ...history];
-
       setHistory(updated);
 
       localStorage.setItem("trade_history", JSON.stringify(updated));
+
     } catch (err) {
       console.log(err);
     }
@@ -73,6 +73,14 @@ export default function Page() {
       : direction === "SELL"
       ? "text-red-400"
       : "text-gray-400";
+
+  // 🔥 SAFE FORMATTER (TradingView-style display)
+  const formatPrice = (value: any) => {
+    if (value === null || value === undefined) return "-";
+    return Number(value).toFixed(
+      pair === "USDJPY" ? 3 : pair === "XAUUSD" ? 2 : 5
+    );
+  };
 
   return (
     <div className="min-h-screen px-4 lg:px-8 py-6">
@@ -176,19 +184,19 @@ export default function Page() {
             </div>
           </div>
 
-          {/* STATS (UPDATED WITH TRADE LEVELS) */}
+          {/* STATS + TRADE LEVELS */}
           {data && (
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
 
               <StatCard
                 title="Sentiment"
-                value={data.news.sentiment}
+                value={data.news?.sentiment || "N/A"}
                 color="yellow"
               />
 
               <StatCard
                 title="Volatility"
-                value={data.volatility.regime}
+                value={data.volatility?.regime || "N/A"}
                 color="blue"
               />
 
@@ -204,30 +212,27 @@ export default function Page() {
                 color="red"
               />
 
-              {/* 🔥 ENTRY PRICE */}
+              {/* 🔥 CLEAN TRADINGVIEW LEVELS */}
               <StatCard
                 title="Entry"
-                value={data.risk.entry_price}
+                value={formatPrice(data.risk.entry_price)}
                 color="white"
               />
 
-              {/* 🔥 STOP LOSS + PIPS */}
               <StatCard
                 title="Stop Loss"
-                value={`${data.risk.stop_loss_price} (${data.risk.stop_loss_pips} pips)`}
+                value={formatPrice(data.risk.stop_loss_price)}
                 color="red"
               />
 
-              {/* 🔥 TAKE PROFIT + PIPS */}
               <StatCard
                 title="Take Profit"
-                value={`${data.risk.take_profit_price} (${data.risk.take_profit_pips} pips)`}
+                value={formatPrice(data.risk.take_profit_price)}
                 color="green"
               />
 
-              {/* 🔥 RISK REWARD */}
               <StatCard
-                title="Risk:Reward"
+                title="RR Ratio"
                 value={`1:${data.risk.risk_reward_ratio}`}
                 color="yellow"
               />
