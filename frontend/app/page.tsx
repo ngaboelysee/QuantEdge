@@ -29,11 +29,13 @@ export default function Page() {
 
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [history, setHistory] = useState<any[]>([]);
 
   async function analyze() {
     setLoading(true);
+    setError(null);
 
     try {
       const res = await getTrade(pair, balance, risk);
@@ -41,8 +43,8 @@ export default function Page() {
 
       const trade = {
         pair,
-        signal: res.signal.direction,
-        confidence: res.signal.confidence,
+        signal: res?.signal?.direction || "N/A",
+        confidence: res?.signal?.confidence || 0,
         balance,
         risk,
         time: new Date().toLocaleTimeString(),
@@ -52,9 +54,9 @@ export default function Page() {
       setHistory(updated);
 
       localStorage.setItem("trade_history", JSON.stringify(updated));
-
-    } catch (err) {
+    } catch (err: any) {
       console.log(err);
+      setError("Failed to fetch trade data");
     }
 
     setLoading(false);
@@ -74,14 +76,6 @@ export default function Page() {
       ? "text-red-400"
       : "text-gray-400";
 
-  // 🔥 SAFE FORMATTER (TradingView-style display)
-  const formatPrice = (value: any) => {
-    if (value === null || value === undefined) return "-";
-    return Number(value).toFixed(
-      pair === "USDJPY" ? 3 : pair === "XAUUSD" ? 2 : 5
-    );
-  };
-
   return (
     <div className="min-h-screen px-4 lg:px-8 py-6">
 
@@ -93,6 +87,10 @@ export default function Page() {
         <p className="text-gray-500">
           AI-powered trading engine + real market visualization
         </p>
+
+        {error && (
+          <p className="text-red-400 mt-2">{error}</p>
+        )}
       </div>
 
       {/* GRID */}
@@ -131,6 +129,7 @@ export default function Page() {
 
           <button
             onClick={analyze}
+            disabled={loading}
             className="primary-btn w-full py-3 rounded-xl font-bold"
           >
             {loading ? "Analyzing..." : "Analyze Trade"}
@@ -140,10 +139,9 @@ export default function Page() {
         {/* RIGHT PANEL */}
         <div className="xl:col-span-9 space-y-6">
 
-          {/* SIGNAL + CHART */}
+          {/* SIGNAL */}
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
-            {/* SIGNAL */}
             <div className="xl:col-span-2 glass p-6">
 
               {!data ? (
@@ -159,20 +157,10 @@ export default function Page() {
                   <p className="text-gray-400 mt-3">
                     Confidence: {data.signal.confidence}%
                   </p>
-
-                  <div className="w-full h-2 bg-black/40 rounded mt-4">
-                    <div
-                      className="h-2 bg-green-400 rounded"
-                      style={{
-                        width: `${data.signal.confidence}%`,
-                      }}
-                    />
-                  </div>
                 </>
               )}
             </div>
 
-            {/* CHART */}
             <div className="glass p-4">
               {!data ? (
                 <div className="text-gray-500">
@@ -184,94 +172,19 @@ export default function Page() {
             </div>
           </div>
 
-          {/* STATS + TRADE LEVELS */}
+          {/* STATS */}
           {data && (
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
 
-              <StatCard
-                title="Sentiment"
-                value={data.news?.sentiment || "N/A"}
-                color="yellow"
-              />
+              <StatCard title="Pair" value={data.pair} />
+              <StatCard title="Price" value={data.price} />
+              <StatCard title="Direction" value={data.signal.direction} />
+              <StatCard title="Confidence" value={`${data.signal.confidence}%`} />
+              <StatCard title="Score" value={data.signal.score} />
 
-              <StatCard
-                title="Volatility"
-                value={data.volatility?.regime || "N/A"}
-                color="blue"
-              />
-
-              <StatCard
-                title="Lot Size"
-                value={data.risk.lot_size}
-                color="green"
-              />
-
-              <StatCard
-                title="Risk"
-                value={`$${data.risk.risk_amount}`}
-                color="red"
-              />
-
-              {/* 🔥 CLEAN TRADINGVIEW LEVELS */}
-              <StatCard
-                title="Entry"
-                value={formatPrice(data.risk.entry_price)}
-                color="white"
-              />
-
-              <StatCard
-                title="Stop Loss"
-                value={formatPrice(data.risk.stop_loss_price)}
-                color="red"
-              />
-
-              <StatCard
-                title="Take Profit"
-                value={formatPrice(data.risk.take_profit_price)}
-                color="green"
-              />
-
-              <StatCard
-                title="RR Ratio"
-                value={`1:${data.risk.risk_reward_ratio}`}
-                color="yellow"
-              />
-
-            </div>
-          )}
-
-          {/* MONTE CARLO */}
-          {data && (
-            <div className="glass p-6">
-
-              <h2 className="text-2xl font-black mb-4">
-                Monte Carlo Simulation
-              </h2>
-
-              <div className="grid grid-cols-3 gap-4">
-
-                <div>
-                  <p className="text-gray-400">Expected</p>
-                  <p className="text-2xl font-bold">
-                    ${data.simulation.expected}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-gray-400">Best</p>
-                  <p className="text-2xl font-bold text-green-400">
-                    ${data.simulation.best}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-gray-400">Worst</p>
-                  <p className="text-2xl font-bold text-red-400">
-                    ${data.simulation.worst}
-                  </p>
-                </div>
-
-              </div>
+              <StatCard title="Risk" value={`$${data.risk.risk_amount}`} />
+              <StatCard title="Lot Size" value={data.risk.lot_size} />
+              <StatCard title="RR" value={`1:${data.risk.risk_reward_ratio}`} />
             </div>
           )}
 
