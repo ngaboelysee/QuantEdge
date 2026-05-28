@@ -631,4 +631,3 @@ def trade(pair: str, balance: float, risk: float):
                 float(mc_data["expected"])
         }
     }
-```
