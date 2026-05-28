@@ -6,9 +6,6 @@ import pandas as pd
 
 app = FastAPI()
 
-# ==========================================
-# CORS
-# ==========================================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -21,9 +18,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==========================================
-# PAIRS CONFIG
-# ==========================================
 PAIRS_CONFIG = {
     "EURUSD": {"symbol": "EURUSD=X", "is_jpy": False, "is_gold": False},
     "GBPUSD": {"symbol": "GBPUSD=X", "is_jpy": False, "is_gold": False},
@@ -35,18 +29,15 @@ PAIRS_CONFIG = {
     "XAUUSD": {"symbol": "GC=F", "is_jpy": False, "is_gold": True}
 }
 
-# ==========================================
-# SAFE CONFIG ACCESS
-# ==========================================
-def get_config(pair):
-    return PAIRS_CONFIG.get(pair.upper())
+def safe_float(x):
+    """prevents Series → float crash"""
+    if isinstance(x, pd.Series):
+        return float(x.iloc[-1])
+    return float(x)
 
-# ==========================================
-# PRICE FORMATTER (UNCHANGED LOGIC)
-# ==========================================
 def format_price(price, pair):
-    config = get_config(pair)
-    price = float(price)
+    config = PAIRS_CONFIG[pair]
+    price = safe_float(price)
 
     if config["is_gold"]:
         return round(price, 2)
@@ -54,70 +45,50 @@ def format_price(price, pair):
         return round(price, 3)
     return round(price, 5)
 
-# ==========================================
-# PIP CALCULATOR (UNCHANGED LOGIC)
-# ==========================================
 def calculate_pips(entry, target, pair):
-    config = get_config(pair)
+    config = PAIRS_CONFIG[pair]
 
     entry = float(entry)
     target = float(target)
 
-    pip_size = 0.1 if config["is_gold"] else 0.01 if config["is_jpy"] else 0.0001
+    if config["is_gold"]:
+        pip_size = 0.1
+    elif config["is_jpy"]:
+        pip_size = 0.01
+    else:
+        pip_size = 0.0001
 
     return int(round(abs(target - entry) / pip_size))
 
-# ==========================================
-# ADVANCED METRICS (SAFE WRAPPER ONLY)
-# ==========================================
 def calculate_advanced_metrics(df):
-
-    # 🔴 SAFE GUARD (prevents crash)
-    if df is None or df.empty or len(df) < 30:
-        last = 1.0
-        return {
-            "close": last,
-            "atr": last * 0.001,
-            "bullish_sweep": False,
-            "bearish_sweep": False,
-            "bullish_fvg": False,
-            "bearish_fvg": False,
-            "bullish_choch": False,
-            "bearish_choch": False,
-            "struct_low": last * 0.99,
-            "struct_high": last * 1.01
-        }
-
     close = df["Close"]
     high = df["High"]
     low = df["Low"]
 
     last_close = float(close.iloc[-1])
 
-    lookback_highs = high.iloc[-25:-1].max()
-    lookback_lows = low.iloc[-25:-1].min()
+    lookback_highs = float(high.iloc[-25:-1].max())
+    lookback_lows = float(low.iloc[-25:-1].min())
 
-    bullish_sweep = bool(low.iloc[-1] < lookback_lows and last_close > lookback_lows)
-    bearish_sweep = bool(high.iloc[-1] > lookback_highs and last_close < lookback_highs)
+    bullish_sweep = low.iloc[-1] < lookback_lows and last_close > lookback_lows
+    bearish_sweep = high.iloc[-1] > lookback_highs and last_close < lookback_highs
 
-    bullish_fvg = bool(low.iloc[-1] > high.iloc[-3])
-    bearish_fvg = bool(high.iloc[-1] < low.iloc[-3])
+    bullish_fvg = low.iloc[-1] > high.iloc[-3]
+    bearish_fvg = high.iloc[-1] < low.iloc[-3]
 
-    recent_pivot_high = high.iloc[-6:-1].max()
-    recent_pivot_low = low.iloc[-6:-1].min()
+    recent_pivot_high = float(high.iloc[-6:-1].max())
+    recent_pivot_low = float(low.iloc[-6:-1].min())
 
-    bullish_choch = bool(last_close > recent_pivot_high)
-    bearish_choch = bool(last_close < recent_pivot_low)
+    bullish_choch = last_close > recent_pivot_high
+    bearish_choch = last_close < recent_pivot_low
 
     struct_low = float(low.iloc[-12:].min())
     struct_high = float(high.iloc[-12:].max())
 
-    tr = (high - low).abs()
-    atr_series = tr.ewm(span=14, adjust=False).mean()
+    tr = (high - low).astype(float)
+    atr_series = tr.ewm(span=14).mean()
 
-    atr = float(atr_series.iloc[-1]) if len(atr_series) > 0 else last_close * 0.001
-    if np.isnan(atr):
-        atr = last_close * 0.001
+    atr = float(atr_series.iloc[-1]) if len(atr_series) else float(last_close * 0.0015)
 
     return {
         "close": last_close,
@@ -132,120 +103,113 @@ def calculate_advanced_metrics(df):
         "struct_high": struct_high
     }
 
-# ==========================================
-# DATA ENGINE (FIXED STABILITY ONLY)
-# ==========================================
 def get_data(pair):
-    config = get_config(pair)
-    if not config:
+    config = PAIRS_CONFIG[pair]
+
+    df = yf.download(
+        config["symbol"],
+        period="14d",
+        interval="1h",
+        progress=False
+    )
+
+    if df is None or df.empty or len(df) < 20:
         return None
 
-    try:
-        df = yf.download(
-            config["symbol"],
-            period="5d",          # 🔥 faster = less failure
-            interval="1h",
-            progress=False,
-            threads=False
-        )
+    return df
 
-        if df is None or df.empty:
-            return None
+def risk_engine(balance, risk_pct, metrics, pair, config, direction):
 
-        return df
+    risk_capital = balance * (risk_pct / 100.0)
+    current_price = metrics["close"]
 
-    except Exception:
-        return None
+    if direction == "BUY":
+        stop_loss_price = metrics["struct_low"]
+        sl_distance = current_price - stop_loss_price
 
-# ==========================================
-# MAIN ENDPOINT (UNCHANGED LOGIC)
-# ==========================================
+    elif direction == "SELL":
+        stop_loss_price = metrics["struct_high"]
+        sl_distance = stop_loss_price - current_price
+
+    else:
+        sl_distance = metrics["atr"] * 2.0
+        stop_loss_price = current_price - sl_distance
+
+    sl_distance = max(sl_distance, metrics["atr"] * 0.5)
+    tp_distance = sl_distance * 3.0
+
+    take_profit_price = (
+        current_price + tp_distance
+        if direction == "BUY"
+        else current_price - tp_distance
+    )
+
+    if config["is_gold"]:
+        lot_size = risk_capital / (sl_distance * 100.0)
+    elif config["is_jpy"]:
+        lot_size = risk_capital / (sl_distance * 1000.0)
+    else:
+        lot_size = risk_capital / (sl_distance * 100000.0)
+
+    sl_pips = calculate_pips(current_price, stop_loss_price, pair)
+    tp_pips = calculate_pips(current_price, take_profit_price, pair)
+
+    rr = round(tp_pips / sl_pips, 2) if sl_pips > 0 else 0
+
+    return {
+        "risk_amount": round(risk_capital, 2),
+        "lot_size": max(0.01, round(lot_size, 2)),
+        "entry_price": format_price(current_price, pair),
+        "stop_loss_price": format_price(stop_loss_price, pair),
+        "take_profit_price": format_price(take_profit_price, pair),
+        "stop_loss_pips": sl_pips,
+        "take_profit_pips": tp_pips,
+        "risk_reward_ratio": rr
+    }
+
 @app.get("/trade")
 def trade(pair: str, balance: float, risk: float):
 
-    try:
-        pair = pair.upper()
+    pair = pair.upper()
 
-        config = get_config(pair)
-        if not config:
-            return {"error": "Pair not supported"}
+    if pair not in PAIRS_CONFIG:
+        return {"error": "Pair not supported"}
 
-        df = get_data(pair)
-        metrics = calculate_advanced_metrics(df)
+    df = get_data(pair)
 
-        # ===============================
-        # YOUR ORIGINAL LOGIC (UNCHANGED)
-        # ===============================
-        score = 0
+    if df is None:
+        return {"error": "No data from Yahoo Finance"}
 
-        if metrics["bullish_sweep"]:
-            score += 2
-        if metrics["bearish_sweep"]:
-            score -= 2
-        if metrics["bullish_choch"]:
-            score += 1.5
-        if metrics["bearish_choch"]:
-            score -= 1.5
-        if metrics["bullish_fvg"]:
-            score += 1
-        if metrics["bearish_fvg"]:
-            score -= 1
+    metrics = calculate_advanced_metrics(df)
 
-        buy_prob = max(5, min(95, 50 + score * 15))
-        sell_prob = 100 - buy_prob
+    score = 0
+    if metrics["bullish_sweep"]: score += 2
+    if metrics["bearish_sweep"]: score -= 2
+    if metrics["bullish_choch"]: score += 1.5
+    if metrics["bearish_choch"]: score -= 1.5
+    if metrics["bullish_fvg"]: score += 1
+    if metrics["bearish_fvg"]: score -= 1
 
-        direction = (
-            "BUY" if buy_prob > 60
-            else "SELL" if buy_prob < 40
-            else "HOLD"
-        )
+    buy_prob = max(5, min(95, 50 + score * 15))
+    sell_prob = 100 - buy_prob
 
-        confidence = max(buy_prob, sell_prob)
+    direction = (
+        "BUY" if buy_prob > 60
+        else "SELL" if buy_prob < 40
+        else "HOLD"
+    )
 
-        risk_capital = balance * (risk / 100)
+    confidence = max(buy_prob, sell_prob)
 
-        current_price = metrics["close"]
+    risk_data = risk_engine(balance, risk, metrics, pair, PAIRS_CONFIG[pair], direction)
 
-        stop_loss = metrics["struct_low"] if direction == "BUY" else metrics["struct_high"]
-        sl_distance = abs(current_price - stop_loss)
-
-        sl_distance = max(sl_distance, metrics["atr"] * 0.5)
-        tp_distance = sl_distance * 3
-
-        take_profit = current_price + tp_distance if direction == "BUY" else current_price - tp_distance
-
-        lot_size = risk_capital / (sl_distance * 100000)
-
-        sl_pips = calculate_pips(current_price, stop_loss, pair)
-        tp_pips = calculate_pips(current_price, take_profit, pair)
-
-        rr = round(tp_pips / sl_pips, 2) if sl_pips > 0 else 0
-
-        return {
-            "pair": pair,
-            "price": format_price(current_price, pair),
-
-            "signal": {
-                "direction": direction,
-                "confidence": round(confidence, 2),
-                "score": round(score, 3)
-            },
-
-            "risk": {
-                "risk_amount": round(risk_capital, 2),
-                "lot_size": max(0.01, round(lot_size, 2)),
-                "entry_price": format_price(current_price, pair),
-                "stop_loss_price": format_price(stop_loss, pair),
-                "take_profit_price": format_price(take_profit, pair),
-                "stop_loss_pips": sl_pips,
-                "take_profit_pips": tp_pips,
-                "risk_reward_ratio": rr
-            }
-        }
-
-    except Exception as e:
-        # 🔴 NEVER LET FRONTEND BREAK
-        return {
-            "error": "backend_safe_mode",
-            "message": str(e)
-        }
+    return {
+        "pair": pair,
+        "price": format_price(metrics["close"], pair),
+        "signal": {
+            "direction": direction,
+            "confidence": round(confidence, 2),
+            "score": round(score, 3)
+        },
+        "risk": risk_data
+    }
