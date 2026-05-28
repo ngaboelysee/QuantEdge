@@ -107,4 +107,3 @@ def calculate_advanced_metrics(df):
     tr1 = high - low
     tr2 = (high - close.shift(1)).abs()
     tr3 = (low - close.shift(1)).abs()
-i want u to refine the take profits and stop loss pips so that it can not just be aa number but be a number like 1.780 like it is on trade view
