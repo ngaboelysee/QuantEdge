@@ -24,14 +24,14 @@ app.add_middleware(
 # STRUCTURAL ASSET CONFIGURATION
 # ==========================================
 PAIRS_CONFIG = {
-    "EURUSD": {"symbol": "EURUSD=X", "is_jpy": False, "is_gold": False},
-    "GBPUSD": {"symbol": "GBPUSD=X", "is_jpy": False, "is_gold": False},
-    "USDJPY": {"symbol": "USDJPY=X", "is_jpy": True,  "is_gold": False},
-    "USDCHF": {"symbol": "USDCHF=X", "is_jpy": False, "is_gold": False},
-    "USDCAD": {"symbol": "USDCAD=X", "is_jpy": False, "is_gold": False},
-    "AUDUSD": {"symbol": "AUDUSD=X", "is_jpy": False, "is_gold": False},
-    "NZDUSD": {"symbol": "NZDUSD=X", "is_jpy": False, "is_gold": False},
-    "XAUUSD": {"symbol": "GC=F",     "is_jpy": False, "is_gold": True}
+    "EURUSD": {"symbol": "EURUSD=X", "is_jpy": False, "is_gold": False, "precision": 5},
+    "GBPUSD": {"symbol": "GBPUSD=X", "is_jpy": False, "is_gold": False, "precision": 5},
+    "USDJPY": {"symbol": "USDJPY=X", "is_jpy": True,  "is_gold": False, "precision": 3},
+    "USDCHF": {"symbol": "USDCHF=X", "is_jpy": False, "is_gold": False, "precision": 5},
+    "USDCAD": {"symbol": "USDCAD=X", "is_jpy": False, "is_gold": False, "precision": 5},
+    "AUDUSD": {"symbol": "AUDUSD=X", "is_jpy": False, "is_gold": False, "precision": 5},
+    "NZDUSD": {"symbol": "NZDUSD=X", "is_jpy": False, "is_gold": False, "precision": 5},
+    "XAUUSD": {"symbol": "GC=F",     "is_jpy": False, "is_gold": True,  "precision": 2}
 }
 
 session = requests.Session()
@@ -151,11 +151,12 @@ def calculate_advanced_metrics(df):
     }
 
 # ==========================================
-# AUTOMATED PIP RISK ENGINE
+# AUTOMATED RISK & EXECUTION ENGINE
 # ==========================================
 def risk_engine(balance, risk_pct, metrics, pair, config, direction):
     risk_capital = balance * (risk_pct / 100.0)
     current_price = metrics["close"]
+    precision = config["precision"]
     
     if direction == "BUY":
         sl_distance = max(current_price - metrics["struct_low"], current_price * 0.001)
@@ -164,25 +165,38 @@ def risk_engine(balance, risk_pct, metrics, pair, config, direction):
     else:
         sl_distance = metrics["atr"] * 2.0
 
-    # Handles specialized contract sizing splits
+    # Contract multipliers mapping
     if config["is_gold"]:
         lot_size = risk_capital / (sl_distance * 100.0)
         pips_conversion_factor = 10.0
     elif config["is_jpy"]:
-        lot_size = risk_capital / (sl_distance * 1000.0)
+        lot_size = risk_capital / (sl_distance * 100.0)
         pips_conversion_factor = 100.0
     else:
         lot_size = risk_capital / (sl_distance * 100000.0)
         pips_conversion_factor = 10000.0
 
-    sl_pips = max(15, round(sl_distance * pips_conversion_factor))
-    tp_pips = round(sl_pips * 3.0) 
+    sl_pips = max(15.0, round(sl_distance * pips_conversion_factor, 1))
+    tp_pips = round(sl_pips * 3.0, 1) 
+
+    # Calculate exact raw price thresholds based on direction
+    if direction == "BUY":
+        sl_price = current_price - (sl_pips / pips_conversion_factor)
+        tp_price = current_price + (tp_pips / pips_conversion_factor)
+    elif direction == "SELL":
+        sl_price = current_price + (sl_pips / pips_conversion_factor)
+        tp_price = current_price - (tp_pips / pips_conversion_factor)
+    else:
+        sl_price = current_price
+        tp_price = current_price
 
     return {
         "risk_amount": round(float(risk_capital), 2),
         "lot_size": max(0.01, round(float(lot_size), 2)),
-        "stop_loss_pips": int(sl_pips),
-        "take_profit_pips": int(tp_pips)
+        # Stripped out distance strings; formatted execution levels mapped directly here
+        "entry": f"{current_price:.{precision}f}",
+        "stop_loss": f"{sl_price:.{precision}f}",
+        "take_profit": f"{tp_price:.{precision}f}"
     }
 
 # ==========================================
@@ -255,9 +269,11 @@ def trade(pair: str, balance: float, risk: float):
     risk_data = risk_engine(balance, risk, metrics, pair, config, direction)
     mc_data = monte_carlo(balance, confidence, noise)
 
+    precision = config["precision"]
+
     return {
         "pair": pair,
-        "price": round(float(metrics["close"]), 5),
+        "price": f"{float(metrics['close']):.{precision}f}",
         "signal": {
             "direction": direction,
             "confidence": float(confidence),
@@ -267,14 +283,14 @@ def trade(pair: str, balance: float, risk: float):
         },
         "volatility": {
             "volatility": float(pct_vol), 
-            "regime": regime  # CONDITION MET: Restored to clean, native volatility string values
+            "regime": regime
         },
         "news": {
             "sentiment": "BULLISH" if direction == "BUY" else "BEARISH" if direction == "SELL" else "NEUTRAL",
             "score": int(confidence),
             "bias": 1 if direction == "BUY" else -1 if direction == "SELL" else 0
         },
-        "risk": risk_data, # CONDITION MET: Outfits clean `stop_loss_pips` and `take_profit_pips` variables
+        "risk": risk_data,
         "simulation": mc_data,
         "final_projection": {
             "start_balance": float(balance),
