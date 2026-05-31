@@ -149,7 +149,7 @@ export default function Page() {
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
             {/* SIGNAL */}
-            <div className="xl:col-span-2 glass p-6">
+            <div className="xl:col-span-2 glass p-6 flex flex-col justify-between">
 
               {!data ? (
                 <div className="text-gray-500">
@@ -157,21 +157,31 @@ export default function Page() {
                 </div>
               ) : (
                 <>
-                  <h2 className={`text-6xl font-black ${signalColor}`}>
-                    {direction}
-                  </h2>
+                  <div>
+                    <h2 className={`text-6xl font-black ${signalColor}`}>
+                      {direction}
+                    </h2>
 
-                  <p className="text-gray-400 mt-3">
-                    Confidence: {data.signal.confidence}%
-                  </p>
+                    <p className="text-gray-400 mt-3">
+                      Confidence: {data.signal.confidence}%
+                    </p>
 
-                  <div className="w-full h-2 bg-black/40 rounded mt-4">
-                    <div
-                      className="h-2 bg-green-400 rounded"
-                      style={{
-                        width: `${data.signal.confidence}%`,
-                      }}
-                    />
+                    <div className="w-full h-2 bg-black/40 rounded mt-4">
+                      <div
+                        className="h-2 bg-green-400 rounded"
+                        style={{
+                          width: `${data.signal.confidence}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* ALIGNED ENTRY PRICE PLACEMENT */}
+                  <div className="mt-6 pt-4 border-t border-white/5 flex justify-between items-center">
+                    <span className="text-gray-400 text-sm">Target Entry Price</span>
+                    <span className="text-2xl font-mono font-bold text-white tracking-wide">
+                      {data.risk.entry}
+                    </span>
                   </div>
                 </>
               )}
@@ -221,17 +231,17 @@ export default function Page() {
                 color="red"
               />
 
-              {/* DEDICATED STOP LOSS PIPS BLOCK */}
+              {/* FIXED: Maps directly to your clean backend string representation */}
               <StatCard
                 title="Stop Loss"
-                value={`${data.risk.stop_loss_pips} Pips`}
+                value={data.risk.stop_loss}
                 color="red"
               />
 
-              {/* DEDICATED TAKE PROFIT PIPS BLOCK */}
+              {/* FIXED: Maps directly to your clean backend string representation */}
               <StatCard
                 title="Take Profit"
-                value={`${data.risk.take_profit_pips} Pips`}
+                value={data.risk.take_profit}
                 color="green"
               />
 
