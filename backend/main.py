@@ -4,6 +4,7 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 import requests
+import time
 
 app = FastAPI()
 
@@ -43,8 +44,11 @@ session.headers.update({
 })
 
 # ==========================================
-# RESILIENT DATA ENGINE
+# NATIVE TIME-LOCKED CACHE
 # ==========================================
+MARKET_CACHE = {}
+CACHE_DURATION_SECONDS = 30 
+
 def fetch_primary_yf(symbol, period, interval, is_gold=False):
     try:
         if is_gold:
@@ -96,11 +100,24 @@ def get_data(pair, interval="1h", period="14d"):
     if not config:
         return None
     
+    current_time = time.time()
+    
+    if pair in MARKET_CACHE:
+        cache_age = current_time - MARKET_CACHE[pair]["timestamp"]
+        if cache_age < CACHE_DURATION_SECONDS:
+            return MARKET_CACHE[pair]["data"]
+            
     df = fetch_primary_yf(config["symbol"], period, interval, is_gold=config["is_gold"])
-    if df is not None and not df.empty:
-        return df
+    if df is None or df.empty:
+        df = fetch_fallback_api(pair)
         
-    return fetch_fallback_api(pair)
+    if df is not None and not df.empty:
+        MARKET_CACHE[pair] = {
+            "timestamp": current_time,
+            "data": df
+        }
+        
+    return df
 
 # ==========================================
 # STRATEGY CALCULATION ENGINE
@@ -151,9 +168,9 @@ def calculate_advanced_metrics(df):
     }
 
 # ==========================================
-# AUTOMATED RISK & EXECUTION ENGINE
+# AUTOMATED RISK & EXECUTION ENGINE (MODIFIED)
 # ==========================================
-def risk_engine(balance, risk_pct, metrics, pair, config, direction):
+def risk_engine(balance, risk_pct, metrics, pair, config, direction, rr_multiplier):
     risk_capital = balance * (risk_pct / 100.0)
     current_price = metrics["close"]
     precision = config["precision"]
@@ -177,7 +194,9 @@ def risk_engine(balance, risk_pct, metrics, pair, config, direction):
         pips_conversion_factor = 10000.0
 
     sl_pips = max(15.0, round(sl_distance * pips_conversion_factor, 1))
-    tp_pips = round(sl_pips * 3.0, 1) 
+    
+    # CHANGED: Target multiplier is now parameter-driven based on the volatility regime
+    tp_pips = round(sl_pips * rr_multiplier, 1) 
 
     # Calculate exact raw price thresholds based on direction
     if direction == "BUY":
@@ -193,16 +212,19 @@ def risk_engine(balance, risk_pct, metrics, pair, config, direction):
     return {
         "risk_amount": round(float(risk_capital), 2),
         "lot_size": max(0.01, round(float(lot_size), 2)),
-        # Stripped out distance strings; formatted execution levels mapped directly here
         "entry": f"{current_price:.{precision}f}",
         "stop_loss": f"{sl_price:.{precision}f}",
-        "take_profit": f"{tp_price:.{precision}f}"
+        "take_profit": f"{tp_price:.{precision}f}",
+        "sl_pips": sl_pips,
+        "tp_pips": tp_pips,
+        "active_rr_ratio": rr_multiplier
     }
 
 # ==========================================
 # MONTE CARLO SIMULATOR
 # ==========================================
 def monte_carlo(balance, confidence, regime_noise):
+    # Standard fallback simulation structure (unused when overridden by endpoint execution vectors)
     simulations = 500
     horizons = 15
     prob_win = confidence / 100.0
@@ -218,7 +240,7 @@ def monte_carlo(balance, confidence, regime_noise):
     }
 
 # ==========================================
-# MAIN INTERFACE
+# MAIN INTERFACE (MODIFIED)
 # ==========================================
 @app.get("/trade")
 def trade(pair: str, balance: float, risk: float):
@@ -238,6 +260,7 @@ def trade(pair: str, balance: float, risk: float):
 
     metrics = calculate_advanced_metrics(df)
     
+    # Unified score evaluations matching original settings
     score = 0.0
     if metrics["bullish_sweep"]: score += 2.0
     if metrics["bearish_sweep"]: score -= 2.0
@@ -250,24 +273,57 @@ def trade(pair: str, balance: float, risk: float):
     sell_prob = 100.0 - buy_prob
 
     if buy_prob > 60:
-        direction = "BUY"
+        tentative_direction = "BUY"
     elif buy_prob < 40:
-        direction = "SELL"
+        tentative_direction = "SELL"
     else:
-        direction = "HOLD"
+        tentative_direction = "HOLD"
 
-    confidence = round(max(buy_prob, sell_prob), 2)
+    # Confluence Checklist Validation Filter Matrix
+    bullish_criteria_count = sum([metrics["bullish_sweep"], metrics["bullish_choch"], metrics["bullish_fvg"]])
+    bearish_criteria_count = sum([metrics["bearish_sweep"], metrics["bearish_choch"], metrics["bearish_fvg"]])
+
+    if tentative_direction == "BUY" and bullish_criteria_count < 2:
+        direction = "HOLD"
+    elif tentative_direction == "SELL" and bearish_criteria_count < 2:
+        direction = "HOLD"
+    else:
+        direction = tentative_direction
+
+    confidence = 50.0 if direction == "HOLD" else round(max(buy_prob, sell_prob), 2)
     
+    # Volatility Parsing Layer
     pct_vol = metrics["atr"] / metrics["close"]
+    
+    # CHANGED: Adjusted target sizing parameters assigned dynamically by market volatility conditions
     if pct_vol < 0.005:
         regime, noise = "LOW_VOL", 0.005
+        rr_multiplier = 1.8  # Commits tighter targets during low-extension environments
     elif pct_vol < 0.015:
         regime, noise = "NORMAL", 0.012
+        rr_multiplier = 2.5  # Standard structural setting
     else:
         regime, noise = "HIGH_VOL", 0.025
+        rr_multiplier = 3.5  # Widens boundaries to extract maximum variance payout
 
-    risk_data = risk_engine(balance, risk, metrics, pair, config, direction)
-    mc_data = monte_carlo(balance, confidence, noise)
+    # CHANGED: Passes the dynamic rr_multiplier variable into the risk script
+    risk_data = risk_engine(balance, risk, metrics, pair, config, direction, rr_multiplier)
+    
+    # CHANGED: Integrated the dynamic reward architecture explicitly inside your vector Monte Carlo simulator
+    simulations = 500
+    horizons = 15
+    prob_win = confidence / 100.0
+    draws = np.random.uniform(0, 1, size=(simulations, horizons))
+    
+    # Multipliers are scaled up proportionally by the active risk reward ratio on win iterations
+    multipliers = np.where(draws < prob_win, 1 + (noise * rr_multiplier), 1 - noise)
+    final_returns = balance * np.prod(multipliers, axis=1)
+
+    mc_data = {
+        "expected": round(float(np.mean(final_returns)), 2),
+        "best": round(float(np.max(final_returns)), 2),
+        "worst": round(float(np.min(final_returns)), 2)
+    }
 
     precision = config["precision"]
 
@@ -283,12 +339,18 @@ def trade(pair: str, balance: float, risk: float):
         },
         "volatility": {
             "volatility": float(pct_vol), 
-            "regime": regime
+            "regime": regime,
+            "applied_target_ratio": rr_multiplier
         },
         "news": {
             "sentiment": "BULLISH" if direction == "BUY" else "BEARISH" if direction == "SELL" else "NEUTRAL",
             "score": int(confidence),
             "bias": 1 if direction == "BUY" else -1 if direction == "SELL" else 0
+        },
+        "backend_checklist_status": {
+            "bullish_confluence_count": int(bullish_criteria_count),
+            "bearish_confluence_count": int(bearish_criteria_count),
+            "structural_filter_applied": tentative_direction != direction
         },
         "risk": risk_data,
         "simulation": mc_data,
