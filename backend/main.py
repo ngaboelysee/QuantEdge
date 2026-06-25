@@ -37,7 +37,7 @@ session.headers.update({
 })
 
 MARKET_CACHE = {}
-CACHE_DURATION_SECONDS = 30 
+CACHE_DURATION_SECONDS = 10  # Reduced cache duration for high-frequency short wins
 
 def fetch_data_safe(symbol, period, interval, is_gold=False):
     try:
@@ -47,7 +47,7 @@ def fetch_data_safe(symbol, period, interval, is_gold=False):
         else:
             df = yf.download(tickers=symbol, period=period, interval=interval, session=session, progress=False, multi_level_index=False)
             
-        if df is not None and not df.empty and len(df) >= 25:
+        if df is not None and not df.empty and len(df) >= 20:
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
             df.columns = [str(col).strip().capitalize() for col in df.columns]
@@ -56,7 +56,7 @@ def fetch_data_safe(symbol, period, interval, is_gold=False):
         pass
     return None
 
-def get_dual_timeframe_data(pair):
+def get_scalping_data(pair):
     config = PAIRS_CONFIG.get(pair)
     if not config:
         return None, None
@@ -65,102 +65,89 @@ def get_dual_timeframe_data(pair):
     if pair in MARKET_CACHE:
         cache = MARKET_CACHE[pair]
         if current_time - cache["timestamp"] < CACHE_DURATION_SECONDS:
-            return cache["df_1h"], cache["df_macro"]
+            return cache["df_15m"], cache["df_anchor"]
             
-    # Fetch Execution timeframe (1-Hour) and Macro Anchor timeframe (4-Hour)
-    df_1h = fetch_data_safe(config["symbol"], "14d", "1h", config["is_gold"])
-    df_macro = fetch_data_safe(config["symbol"], "60d", "4h", config["is_gold"])
+    # SCALPING ORIENTATION: 15-Minute Entry Chart paired with 1-Hour Trend Anchor
+    df_15m = fetch_data_safe(config["symbol"], "5d", "15m", config["is_gold"])
+    df_anchor = fetch_data_safe(config["symbol"], "14d", "1h", config["is_gold"])
     
-    if df_1h is not None and not df_1h.empty:
+    if df_15m is not None and not df_15m.empty:
         MARKET_CACHE[pair] = {
             "timestamp": current_time,
-            "df_1h": df_1h,
-            "df_macro": df_macro
+            "df_15m": df_15m,
+            "df_anchor": df_anchor
         }
-    return df_1h, df_macro
+    return df_15m, df_anchor
 
-def analyze_macro_trend(df_macro):
-    """Calculates macro institutional direction using moving average matrices and structural tracking"""
-    if df_macro is None or df_macro.empty or len(df_macro) < 20:
+def analyze_anchor_trend(df_anchor):
+    if df_anchor is None or df_anchor.empty or len(df_anchor) < 15:
         return "NEUTRAL"
         
-    close_m = df_macro["Close"]
-    ema_fast = close_m.ewm(span=12, adjust=False).mean().iloc[-1]
-    ema_slow = close_m.ewm(span=26, adjust=False).mean().iloc[-1]
+    close_m = df_anchor["Close"]
+    ema_fast = close_m.ewm(span=9, adjust=False).mean().iloc[-1]
+    ema_slow = close_m.ewm(span=21, adjust=False).mean().iloc[-1]
     
-    # Identify macro-pivot structural high/low direction
-    macro_high = float(df_macro["High"].iloc[-15:-1].max())
-    macro_low = float(df_macro["Low"].iloc[-15:-1].min())
-    current_close = float(close_m.iloc[-1])
-    
-    if ema_fast > ema_slow and current_close > ((macro_high + macro_low) / 2):
+    if ema_fast > ema_slow:
         return "BULLISH"
-    elif ema_fast < ema_slow and current_close < ((macro_high + macro_low) / 2):
+    elif ema_fast < ema_slow:
         return "BEARISH"
     return "NEUTRAL"
 
-def calculate_advanced_metrics(df_1h, macro_trend):
-    close = df_1h["Close"]
-    high = df_1h["High"]
-    low = df_1h["Low"]
+def calculate_scalping_metrics(df_15m, anchor_trend):
+    close = df_15m["Close"]
+    high = df_15m["High"]
+    low = df_15m["Low"]
     last_close = float(close.iloc[-1])
     
-    # Volatility parsing
+    # Fast ATR for quick scalping targets
     tr1 = high - low
     tr2 = (high - close.shift(1)).abs()
     tr3 = (low - close.shift(1)).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = float(tr.ewm(span=14, adjust=False).mean().iloc[-1])
-    atr_cleansed = atr if atr > 0 else last_close * 0.0015
+    atr = float(tr.ewm(span=10, adjust=False).mean().iloc[-1])
+    atr_cleansed = atr if atr > 0 else last_close * 0.0008
 
-    # Structural levels tracking
-    lookback_highs = high.iloc[-25:-1].max()
-    lookback_lows = low.iloc[-25:-1].min()
+    # Highly responsive short-term liquidity sweeps (10-bar lookback)
+    lookback_high = high.iloc[-10:-1].max()
+    lookback_low = low.iloc[-10:-1].min()
     
-    bullish_sweep = bool((low.iloc[-1] < lookback_lows) and (last_close > lookback_lows))
-    bearish_sweep = bool((high.iloc[-1] > lookback_highs) and (last_close < lookback_highs))
+    minor_bullish_sweep = bool((low.iloc[-1] < lookback_low) and (last_close > lookback_low))
+    minor_bearish_sweep = bool((high.iloc[-1] > lookback_high) and (last_close < lookback_high))
     
-    recent_pivot_high = high.iloc[-8:-1].max()
-    recent_pivot_low = low.iloc[-8:-1].min()
-    displacement_val = atr_cleansed * 0.15
+    # Momentum breakouts
+    fast_ema = close.ewm(span=7, adjust=False).mean()
+    momentum_up = bool(last_close > fast_ema.iloc[-1] and close.iloc[-2] <= fast_ema.iloc[-2])
+    momentum_down = bool(last_close < fast_ema.iloc[-1] and close.iloc[-2] >= fast_ema.iloc[-2])
     
-    bullish_choch = bool(last_close > (recent_pivot_high + displacement_val) and close.iloc[-2] <= recent_pivot_high)
-    bearish_choch = bool(last_close < (recent_pivot_low - displacement_val) and close.iloc[-2] >= recent_pivot_low)
-    
-    bullish_fvg = bool(low.iloc[-1] > high.iloc[-3] and close.iloc[-2] > high.iloc[-3])
-    bearish_fvg = bool(high.iloc[-1] < low.iloc[-3] and close.iloc[-2] < low.iloc[-3])
-    
-    struct_low = float(low.iloc[-12:].min())
-    struct_high = float(high.iloc[-12:].max())
+    struct_low = float(low.iloc[-8:].min())
+    struct_high = float(high.iloc[-8:].max())
     
     return {
         "close": last_close,
         "atr": atr_cleansed,
-        "bullish_sweep": bullish_sweep,
-        "bearish_sweep": bearish_sweep,
-        "bullish_fvg": bullish_fvg,
-        "bearish_fvg": bearish_fvg,
-        "bullish_choch": bullish_choch,
-        "bearish_choch": bearish_choch,
+        "bullish_sweep": minor_bullish_sweep,
+        "bearish_sweep": minor_bearish_sweep,
+        "momentum_up": momentum_up,
+        "momentum_down": momentum_down,
         "struct_low": struct_low,
         "struct_high": struct_high,
-        "macro_trend": macro_trend
+        "anchor_trend": anchor_trend
     }
 
-def risk_engine(balance, risk_pct, metrics, pair, config, direction, rr_multiplier, confidence):
+def risk_engine_scalper(balance, risk_pct, metrics, pair, config, direction, rr_multiplier):
     current_price = metrics["close"]
     precision = config["precision"]
     
-    confidence_scale = max(0.4, (confidence - 50.0) / 50.0)
-    calibrated_risk = risk_pct * confidence_scale
-    risk_capital = balance * (calibrated_risk / 100.0)
+    # Scalping Risk allocation is fixed and steady since setups pass quickly
+    risk_capital = float(balance) * (float(risk_pct) / 100.0)
     
+    # Ultra tight stop losses (1.1x ATR or structural extreme)
     if direction == "BUY":
-        sl_distance = max(current_price - metrics["struct_low"], metrics["atr"] * 1.5)
+        sl_distance = max(current_price - metrics["struct_low"], metrics["atr"] * 1.1)
     elif direction == "SELL":
-        sl_distance = max(metrics["struct_high"] - current_price, metrics["atr"] * 1.5)
+        sl_distance = max(metrics["struct_high"] - current_price, metrics["atr"] * 1.1)
     else:
-        sl_distance = metrics["atr"] * 2.0
+        sl_distance = metrics["atr"] * 1.5
 
     if config["is_gold"]:
         lot_size = risk_capital / (sl_distance * 100.0)
@@ -172,8 +159,8 @@ def risk_engine(balance, risk_pct, metrics, pair, config, direction, rr_multipli
         lot_size = risk_capital / (sl_distance * 100000.0)
         pips_factor = 10000.0
 
-    sl_pips = max(15.0, round(sl_distance * pips_factor, 1))
-    tp_pips = round(sl_pips * rr_multiplier, 1) 
+    sl_pips = max(5.0, round(sl_distance * pips_factor, 1)) # Smaller minimum floor for tight trades
+    tp_pips = round(sl_pips * float(rr_multiplier), 1) 
 
     if direction == "BUY":
         sl_price = current_price - (sl_pips / pips_factor)
@@ -190,9 +177,9 @@ def risk_engine(balance, risk_pct, metrics, pair, config, direction, rr_multipli
         "entry": f"{current_price:.{precision}f}",
         "stop_loss": f"{sl_price:.{precision}f}",
         "take_profit": f"{tp_price:.{precision}f}",
-        "sl_pips": sl_pips,
-        "tp_pips": tp_pips,
-        "active_rr_ratio": rr_multiplier
+        "sl_pips": float(sl_pips),
+        "tp_pips": float(tp_pips),
+        "active_rr_ratio": float(rr_multiplier)
     }
 
 @app.get("/trade")
@@ -203,43 +190,37 @@ def trade(pair: str, balance: float, risk: float):
     if not config:
         return {"error": f"Pair {pair} is missing configuration details."}
 
-    df_1h, df_macro = get_dual_timeframe_data(pair)
-    if df_1h is None or df_1h.empty:
+    df_15m, df_anchor = get_scalping_data(pair)
+    if df_15m is None or df_15m.empty:
         return {
             "pair": pair,
-            "error": "Upstream historical data arrays missing.",
+            "error": "Data stream connectivity issues.",
             "signal": {"direction": "HOLD", "confidence": 50.0, "score": 0.0}
         }
 
-    macro_trend = analyze_macro_trend(df_macro)
-    metrics = calculate_advanced_metrics(df_1h, macro_trend)
+    anchor_trend = analyze_anchor_trend(df_anchor)
+    metrics = calculate_scalping_metrics(df_15m, anchor_trend)
     
+    # Highly responsive scoring system tuned for high volume entries
     score = 0.0
     if metrics["bullish_sweep"]: score += 2.0
     if metrics["bearish_sweep"]: score -= 2.0
-    if metrics["bullish_choch"]:  score += 1.5
-    if metrics["bearish_choch"]:  score -= 1.5
-    if metrics["bullish_fvg"]:   score += 1.0
-    if metrics["bearish_fvg"]:   score -= 1.0
+    if metrics["momentum_up"]:    score += 1.5
+    if metrics["momentum_down"]:  score -= 1.5
 
-    # --- THE TIME-FRAME CONFLUENCE GATEKEEPER ---
-    if metrics["macro_trend"] == "BULLISH":
-        if score > 0:
-            score += 1.5  # Reward executing setups aligned with higher-timeframe order flow
-        else:
-            score *= 0.2  # Crush counter-trend sell setups down to near-zero impact
-    elif metrics["macro_trend"] == "BEARISH":
-        if score < 0:
-            score -= 1.5  # Reward execution aligned with higher-timeframe macro shorts
-        else:
-            score *= 0.2  # Crush counter-trend buy setups down to near-zero impact
+    # Trend filter overlay with responsive amplification
+    if metrics["anchor_trend"] == "BULLISH":
+        score += 1.0
+    elif metrics["anchor_trend"] == "BEARISH":
+        score -= 1.0
 
-    buy_prob = max(5.0, min(95.0, 50.0 + (score * 13.0)))
+    buy_prob = max(5.0, min(95.0, 50.0 + (score * 15.0)))
     sell_prob = 100.0 - buy_prob
 
-    if buy_prob > 63:
+    # Relaxed baseline boundaries to easily pass execution signals
+    if buy_prob > 58:
         direction = "BUY"
-    elif buy_prob < 37:
+    elif buy_prob < 42:
         direction = "SELL"
     else:
         direction = "HOLD"
@@ -247,25 +228,31 @@ def trade(pair: str, balance: float, risk: float):
     confidence = round(max(buy_prob, sell_prob), 2)
     pct_vol = metrics["atr"] / metrics["close"]
     
-    if pct_vol < 0.005:
-        regime, rr_multiplier = "LOW_VOL", 1.8
-    elif pct_vol < 0.015:
-        regime, rr_multiplier = "NORMAL", 2.5
+    # SHORT WINS TARGETING: Compressed Risk-Reward ratios for fast execution turnaround
+    if pct_vol < 0.004:
+        regime, rr_multiplier = "LOW_VOL", 1.2
+    elif pct_vol < 0.012:
+        regime, rr_multiplier = "NORMAL", 1.4
     else:
-        regime, rr_multiplier = "HIGH_VOL", 3.4
+        regime, rr_multiplier = "HIGH_VOL", 1.6
 
-    risk_data = risk_engine(balance, risk, metrics, pair, config, direction, rr_multiplier, confidence)
+    risk_data = risk_engine_scalper(balance, risk, metrics, pair, config, direction, rr_multiplier)
     
+    # Simulation calculation blocks
     simulations, horizons = 500, 15
-    prob_win = confidence / 100.0
-    risk_dollar = risk_data["risk_amount"]
+    prob_win = float(confidence) / 100.0
+    risk_dollar = float(risk_data["risk_amount"])
+    target_mult = float(rr_multiplier)
+    start_bal = float(balance)
     
     draws = np.random.uniform(0, 1, size=(simulations, horizons))
-    trade_outcomes = np.where(draws < prob_win, risk_dollar * rr_multiplier, -risk_dollar)
+    trade_outcomes = np.where(draws < prob_win, risk_dollar * target_mult, -risk_dollar)
+    
     if direction == "HOLD":
         trade_outcomes = np.zeros_like(trade_outcomes)
         
-    final_returns = balance + np.sum(trade_outcomes, axis=1)
+    final_returns = start_bal + np.sum(trade_outcomes, axis=1)
+    
     mc_data = {
         "expected": round(float(np.mean(final_returns)), 2),
         "best": round(float(np.max(final_returns)), 2),
@@ -287,7 +274,7 @@ def trade(pair: str, balance: float, risk: float):
         "volatility": {
             "volatility": float(pct_vol), 
             "regime": regime,
-            "applied_target_ratio": rr_multiplier
+            "applied_target_ratio": target_mult
         },
         "news": {
             "sentiment": "BULLISH" if direction == "BUY" else "BEARISH" if direction == "SELL" else "NEUTRAL",
@@ -297,7 +284,7 @@ def trade(pair: str, balance: float, risk: float):
         "risk": risk_data,
         "simulation": mc_data,
         "final_projection": {
-            "start_balance": float(balance),
+            "start_balance": start_bal,
             "expected_end_balance": float(mc_data["expected"])
         }
     }
